@@ -40,7 +40,11 @@ from sglang.srt.managers.schedule_batch import ModelWorkerBatch, ScheduleBatch
 from sglang.srt.managers.scheduler import GenerationBatchResult
 from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
 from sglang.srt.mem_cache.memory_pool import ReqToTokenPool
-from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
+from sglang.srt.model_executor.forward_batch_info import (
+    CaptureHiddenMode,
+    ForwardBatch, 
+    PPProxyTensors
+)
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import MultiprocessingSerializer, broadcast_pyobj, set_random_seed
 from sglang.srt.utils.hf_transformers_utils import (
@@ -456,6 +460,15 @@ class TpModelWorker(BaseTpWorker):
             # update the consumer index of hicache to the running batch
             self.set_hicache_consumer(model_worker_batch.hicache_consumer_index)
 
+            # For PP disaggregated prefill + spec, capture full hidden states  
+            # so the draft model can run extend on the last rank  
+            if (  
+                self.enable_spec  
+                and model_worker_batch is not None  
+                and model_worker_batch.forward_mode.is_extend()  
+            ):  
+                model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL 
+            
             forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
         else:
             # FIXME(lsyin): unify the interface of forward_batch

@@ -2804,6 +2804,13 @@ class Scheduler(
             if self.spec_algorithm.is_none() or self.enable_overlap:
                 # In most cases, we use the model worker batch to run the forward.
                 worker_batch_or_batch = batch.get_model_worker_batch()
+            elif (  
+                self.pp_size > 1  
+                and self.server_args.disaggregation_mode == "prefill"  
+            ):  
+                # PP disaggregated prefill + spec: tp_worker handles the PP pipeline,  
+                # so we need a ModelWorkerBatch (not raw ScheduleBatch).  
+                worker_batch_or_batch = batch.get_model_worker_batch()  
             else:
                 # In speculative decoding v1 (non-overlap) case, we use the batch directly.
                 # TODO(lsyin): delete this branch after unifying the abstraction.
@@ -2859,15 +2866,29 @@ class Scheduler(
                 batch_result = self.tp_worker.forward_batch_split_prefill(batch)
                 future_indices_or_next_token_ids = batch_result.next_token_ids
             else:
-                kwargs = (
-                    {"pp_proxy_tensors": pp_proxy_tensors}
-                    if self.spec_algorithm.is_none()
-                    else {}
-                )
-                with self.record_forward_metrics(batch):
-                    batch_result = self.model_worker.forward_batch_generation(
-                        worker_batch_or_batch, **kwargs
+                if (  
+                    self.pp_size > 1  
+                    and not self.spec_algorithm.is_none()  
+                    and self.server_args.disaggregation_mode == "prefill"  
+                ):  
+                    # PP disaggregated prefill + spec: use tp_worker for the PP pipeline.  
+                    # Draft extend is triggered in _pp_launch_batch on the last PP rank  
+                    # after the target forward completes.  
+                    with self.record_forward_metrics(batch):  
+                        batch_result = self.tp_worker.forward_batch_generation(  
+                            worker_batch_or_batch,  
+                            pp_proxy_tensors=pp_proxy_tensors,  
+                        )
+                else:
+                    kwargs = (
+                        {"pp_proxy_tensors": pp_proxy_tensors}
+                        if self.spec_algorithm.is_none()
+                        else {}
                     )
+                    with self.record_forward_metrics(batch):
+                        batch_result = self.model_worker.forward_batch_generation(
+                            worker_batch_or_batch, **kwargs
+                        )
                 future_indices_or_next_token_ids = batch_result.next_token_ids
                 self.update_cache_from_scheduler(batch, batch_result)
 

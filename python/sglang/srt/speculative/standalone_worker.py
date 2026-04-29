@@ -71,6 +71,11 @@ class StandaloneWorker(EAGLEWorker):
             self.hot_token_id = None
 
         # Init draft worker
+        # Draft model does not participate in PP; force pp_size=1 so it does not  
+        # join the PP NCCL group (which would conflict with the target worker's rank 0).
+        backup_pp_size = server_args.pp_size  
+        if server_args.pp_size > 1:  
+            server_args.pp_size = 1  # draft model 不参与 PP 
         with empty_context(), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
             TpModelWorker.__init__(
                 self,
@@ -88,6 +93,7 @@ class StandaloneWorker(EAGLEWorker):
                 token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
                 memory_pool_config=target_worker.model_runner.memory_pool_config,
             )
+        server_args.pp_size = backup_pp_size
 
         # Init attention backend and cuda graphs
         self.draft_model_runner.server_args.disable_cuda_graph = (

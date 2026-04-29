@@ -153,6 +153,12 @@ class EAGLEWorker(TpModelWorker):
             ctx = draft_tp_context(get_attention_tp_group())
         else:
             ctx = empty_context()
+        
+        # Draft model does not participate in PP; force pp_size=1 so it does not  
+        # join the PP NCCL group (which would conflict with the target worker's rank 0).
+        backup_pp_size = server_args.pp_size  
+        if server_args.pp_size > 1:  
+            server_args.pp_size = 1
         with (
             ctx
         ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
@@ -171,6 +177,7 @@ class EAGLEWorker(TpModelWorker):
                 token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
                 memory_pool_config=target_worker.model_runner.memory_pool_config,
             )
+        server_args.pp_size = backup_pp_size
 
         embed, head = self.target_worker.model_runner.model.get_embed_and_head()
 
@@ -1094,6 +1101,29 @@ class EAGLEWorker(TpModelWorker):
         assert isinstance(forward_batch.spec_info, EagleDraftInput)
         assert forward_batch.spec_info is batch.spec_info
         self.capture_for_decode(logits_output, forward_batch.spec_info)
+
+    def run_draft_extend_for_pp_prefill(  
+        self,  
+        batch: ScheduleBatch,  
+        hidden_states: torch.Tensor,  
+        next_token_ids: torch.Tensor,  
+        mm_input_embeds: Optional[torch.Tensor] = None,  
+    ):  
+        """Run draft extend on the last PP rank for disaggregated prefill.  
+  
+        Called from _pp_launch_batch after the target model forward completes.  
+        seq_lens_cpu is passed as None and will be recomputed inside forward_draft_extend.  
+        """  
+        with self.draft_tp_context(  
+            self.draft_model_runner.tp_group  
+        ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():  
+            self.forward_draft_extend(  
+                batch,  
+                hidden_states,  
+                next_token_ids,  
+                seq_lens_cpu=None,  # recomputed inside forward_draft_extend  
+                mm_input_embeds=mm_input_embeds,  
+            )
 
     def forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         assert isinstance(batch.spec_info, EagleDraftInput)

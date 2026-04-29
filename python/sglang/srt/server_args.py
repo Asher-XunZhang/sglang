@@ -6637,9 +6637,15 @@ class ServerArgs:
         )
 
         if self.pp_size > 1:
-            assert (
-                self.disable_overlap_schedule and self.speculative_algorithm is None
-            ), "Pipeline parallelism is not compatible with overlap schedule, speculative decoding"
+            # assert (
+            #     self.disable_overlap_schedule and self.speculative_algorithm is None
+            # ), "Pipeline parallelism is not compatible with overlap schedule, speculative decoding"
+            assert self.disable_overlap_schedule, 
+                "Pipeline parallelism is not compatible with overlap schedule"  
+            if self.speculative_algorithm is not None:  
+                assert self.disaggregation_mode == "prefill", (  
+                    "PP + speculative decoding is only supported in disaggregated prefill mode"  
+                )
 
         assert not (
             self.dp_size > 1 and self.nnodes != 1 and not self.enable_dp_attention

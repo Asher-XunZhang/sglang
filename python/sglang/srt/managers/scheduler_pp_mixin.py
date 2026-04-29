@@ -1163,6 +1163,31 @@ class SchedulerPPMixin:
             with self.forward_stream_ctx:
                 self.forward_stream.wait_stream(self.schedule_stream)
                 result = self.run_batch(self.cur_batch, pp_proxy_tensors)
+
+                # PP disaggregated prefill + spec:  
+                # After the target model forward completes on the last PP rank,  
+                # run draft extend to fill the draft KV cache.  
+                # batch.spec_info will be set by forward_draft_extend, which is  
+                # later read by process_batch_result_disagg_prefill to transfer  
+                # hidden state metadata to the decode instance.  
+                if (  
+                    self.pp_group.is_last_rank  
+                    and not self.spec_algorithm.is_none()  
+                    and self.server_args.disaggregation_mode == "prefill"  
+                    and result.logits_output is not None  
+                    and result.logits_output.hidden_states is not None  
+                    and (  
+                        self.cur_batch.forward_mode.is_extend()  
+                        or self.cur_batch.is_extend_in_batch  
+                    )  
+                ):  
+                    self.draft_worker.run_draft_extend_for_pp_prefill(  
+                        self.cur_batch,  
+                        result.logits_output.hidden_states,  
+                        result.next_token_ids,  
+                        result.logits_output.mm_input_embeds,  
+                    ) 
+                
                 mb_metadata[mb_id] = PPBatchMetadata(
                     can_run_cuda_graph=result.can_run_cuda_graph,
                 )
