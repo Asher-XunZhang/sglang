@@ -21,7 +21,10 @@ import torch
 from sglang.srt.distributed import get_tp_group
 from sglang.srt.layers.dp_attention import get_attention_tp_group
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
-from sglang.srt.layers.moe.utils import speculative_moe_backend_context
+from sglang.srt.layers.moe.utils import (
+    speculative_moe_a2a_backend_context,
+    speculative_moe_backend_context,
+)
 from sglang.srt.layers.utils.logprob import add_output_logprobs_for_spec_v1
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.scheduler import GenerationBatchResult
@@ -128,23 +131,36 @@ class MultiLayerEagleWorker(TpModelWorker):
             ctx = draft_tp_context(get_attention_tp_group())
         else:
             ctx = empty_context()
-        with ctx, speculative_moe_backend_context():
-            super().__init__(
-                server_args=server_args,
-                gpu_id=gpu_id,
-                tp_rank=tp_rank,
-                pp_rank=0,  # FIXME
-                dp_rank=dp_rank,
-                moe_ep_rank=moe_ep_rank,
-                attn_cp_rank=attn_cp_rank,
-                moe_dp_rank=moe_dp_rank,
-                nccl_port=nccl_port,
-                is_draft_worker=True,
-                req_to_token_pool=self.req_to_token_pool,
-                token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
-                memory_pool_config=target_worker.model_runner.memory_pool_config,
-                is_multi_layer_eagle=True,
-            )
+
+        # Draft model does not participate in PP; force pp_size=1 so it does not
+        # join the PP NCCL group owned by the target worker.
+        backup_pp_size = server_args.pp_size
+        try:
+            if server_args.pp_size > 1:
+                server_args.pp_size = 1
+            with (
+                ctx,
+                speculative_moe_backend_context(),
+                speculative_moe_a2a_backend_context(),
+            ):
+                super().__init__(
+                    server_args=server_args,
+                    gpu_id=gpu_id,
+                    tp_rank=tp_rank,
+                    pp_rank=0,  # FIXME
+                    dp_rank=dp_rank,
+                    moe_ep_rank=moe_ep_rank,
+                    attn_cp_rank=attn_cp_rank,
+                    moe_dp_rank=moe_dp_rank,
+                    nccl_port=nccl_port,
+                    is_draft_worker=True,
+                    req_to_token_pool=self.req_to_token_pool,
+                    token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
+                    memory_pool_config=target_worker.model_runner.memory_pool_config,
+                    is_multi_layer_eagle=True,
+                )
+        finally:
+            server_args.pp_size = backup_pp_size
 
         embed, head = self.target_worker.model_runner.model.get_embed_and_head()
 
@@ -651,6 +667,27 @@ class MultiLayerEagleWorker(TpModelWorker):
         assert forward_batch.spec_info is batch.spec_info
         forward_batch.spec_info.topk_p = torch.cat(topk_p_list, dim=1)
         forward_batch.spec_info.topk_index = torch.cat(topk_index_list, dim=1)
+
+    def run_draft_extend_for_pp_prefill(
+        self,
+        batch: ScheduleBatch,
+        hidden_states: torch.Tensor,
+        next_token_ids: torch.Tensor,
+        mm_input_embeds: Optional[torch.Tensor] = None,
+    ):
+        with (
+            self.draft_tp_context(self.mtp_model_runner(0).tp_group),
+            speculative_moe_backend_context(),
+            speculative_moe_a2a_backend_context(),
+        ):
+            # Multi-layer MTP does not consume multimodal draft inputs in this path.
+            del mm_input_embeds
+            self.forward_draft_extend(
+                batch,
+                hidden_states,
+                next_token_ids,
+                seq_lens_cpu=None,
+            )
 
     def forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         assert isinstance(batch.spec_info, EagleDraftInput)

@@ -6640,11 +6640,12 @@ class ServerArgs:
             # assert (
             #     self.disable_overlap_schedule and self.speculative_algorithm is None
             # ), "Pipeline parallelism is not compatible with overlap schedule, speculative decoding"
-            assert self.disable_overlap_schedule, 
-                "Pipeline parallelism is not compatible with overlap schedule"  
-            if self.speculative_algorithm is not None:  
-                assert self.disaggregation_mode == "prefill", (  
-                    "PP + speculative decoding is only supported in disaggregated prefill mode"  
+            assert self.disable_overlap_schedule, (
+                "Pipeline parallelism is not compatible with overlap schedule"
+            )
+            if self.speculative_algorithm is not None:
+                assert self.disaggregation_mode == "prefill", (
+                    "PP + speculative decoding is only supported in disaggregated prefill mode"
                 )
 
         assert not (

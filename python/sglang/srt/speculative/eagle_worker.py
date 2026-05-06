@@ -157,27 +157,29 @@ class EAGLEWorker(TpModelWorker):
         # Draft model does not participate in PP; force pp_size=1 so it does not  
         # join the PP NCCL group (which would conflict with the target worker's rank 0).
         backup_pp_size = server_args.pp_size  
-        if server_args.pp_size > 1:  
-            server_args.pp_size = 1
-        with (
-            ctx
-        ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
-            super().__init__(
-                server_args=server_args,
-                gpu_id=gpu_id,
-                tp_rank=tp_rank,
-                pp_rank=0,  # FIXME
-                dp_rank=dp_rank,
-                moe_ep_rank=moe_ep_rank,
-                attn_cp_rank=attn_cp_rank,
-                moe_dp_rank=moe_dp_rank,
-                nccl_port=nccl_port,
-                is_draft_worker=True,
-                req_to_token_pool=self.req_to_token_pool,
-                token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
-                memory_pool_config=target_worker.model_runner.memory_pool_config,
-            )
-        server_args.pp_size = backup_pp_size
+        try:
+            if server_args.pp_size > 1:  
+                server_args.pp_size = 1
+            with (
+                ctx
+            ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
+                super().__init__(
+                    server_args=server_args,
+                    gpu_id=gpu_id,
+                    tp_rank=tp_rank,
+                    pp_rank=0,  # FIXME
+                    dp_rank=dp_rank,
+                    moe_ep_rank=moe_ep_rank,
+                    attn_cp_rank=attn_cp_rank,
+                    moe_dp_rank=moe_dp_rank,
+                    nccl_port=nccl_port,
+                    is_draft_worker=True,
+                    req_to_token_pool=self.req_to_token_pool,
+                    token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
+                    memory_pool_config=target_worker.model_runner.memory_pool_config,
+                )
+        finally:
+            server_args.pp_size = backup_pp_size
 
         embed, head = self.target_worker.model_runner.model.get_embed_and_head()
 

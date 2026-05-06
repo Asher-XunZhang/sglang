@@ -138,6 +138,7 @@ class MetadataBuffers:
         size: int,
         hidden_size: int,
         hidden_states_dtype: torch.dtype,
+        max_spec_topk_num: int = 16,
         max_top_logprobs_num: int = 128,
         custom_mem_pool: torch.cuda.MemPool = None,
     ):
@@ -181,10 +182,10 @@ class MetadataBuffers:
             )
             # For PD + spec decode
             self.output_topk_p = torch.zeros(
-                (size, 16), dtype=torch.float32, device=device
+                (size, max_spec_topk_num), dtype=torch.float32, device=device
             )
             self.output_topk_index = torch.zeros(
-                (size, 16), dtype=torch.int64, device=device
+                (size, max_spec_topk_num), dtype=torch.int64, device=device
             )
             self.output_hidden_states = torch.zeros(
                 (size, hidden_size), dtype=hidden_states_dtype, device=device

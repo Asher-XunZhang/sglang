@@ -643,14 +643,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         if loop_num > 1:
             self.num_effective_layers = self.num_effective_layers * loop_num
 
-        assert (
-            (not model_has_mtp_layers)
-            or (self.spec_algorithm.is_none())
-            or (
-                (not self.spec_algorithm.is_none())
-                and (self.num_effective_layers == model_num_layers)
-            )
-        ), "PP is not compatible with MTP models."
+        self._validate_mtp_pp_compatibility(model_has_mtp_layers, model_num_layers)
 
         # Consider PP, so use start_layer and end_layer.
         full_attention_layer_ids = [
@@ -764,6 +757,24 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         self.init_piecewise_cuda_graphs()
 
         self.prealloc_symmetric_memory_pool()
+
+    def _validate_mtp_pp_compatibility(
+        self, model_has_mtp_layers: bool, model_num_layers: int
+    ) -> None:
+        allow_partitioned_target_in_pp_prefill = (
+            model_has_mtp_layers
+            and not self.is_draft_worker
+            and self.pp_size > 1
+            and self.server_args.disaggregation_mode == "prefill"
+            and not self.spec_algorithm.is_none()
+        )
+
+        assert (
+            (not model_has_mtp_layers)
+            or self.spec_algorithm.is_none()
+            or allow_partitioned_target_in_pp_prefill
+            or (self.num_effective_layers == model_num_layers)
+        ), "PP is not compatible with MTP models."
 
     def init_routed_experts_capturer(self):
         if not self.server_args.disable_shared_experts_fusion and hasattr(

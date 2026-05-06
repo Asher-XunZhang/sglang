@@ -515,7 +515,7 @@ class SchedulerDisaggregationPrefillMixin:
                 req.output_ids.append(next_token_id)
                 self.tree_cache.cache_unfinished_req(req)  # update the tree and lock
                 self.disagg_prefill_inflight_queue.append(req)
-                if self.spec_algorithm.is_eagle() and batch.spec_info is not None:
+                if self.spec_algorithm.supports_spec_v2() and batch.spec_info is not None:
                     req.output_topk_p = batch.spec_info.topk_p[i]
                     req.output_topk_index = batch.spec_info.topk_index[i]
                     req.hidden_states_tensor = (

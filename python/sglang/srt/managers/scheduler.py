@@ -1076,6 +1076,11 @@ class Scheduler(
         self.transfer_backend = TransferBackend(
             self.server_args.disaggregation_transfer_backend
         )
+        spec_metadata_topk_num = 16
+        if self.spec_algorithm.supports_spec_v2():
+            spec_metadata_topk_num = self.server_args.speculative_eagle_topk or 1
+            if self.server_args.enable_multi_layer_eagle:
+                spec_metadata_topk_num *= self.server_args.speculative_num_steps or 1
 
         if self.draft_worker is None or self.spec_algorithm.is_ngram():
             draft_token_to_kv_pool = None
@@ -1110,6 +1115,7 @@ class Scheduler(
                     if self.spec_algorithm.is_eagle()
                     else torch.float32
                 ),
+                max_spec_topk_num=spec_metadata_topk_num,
                 custom_mem_pool=self.token_to_kv_pool_allocator.get_kvcache().maybe_get_custom_mem_pool(),
             )
 
@@ -1154,17 +1160,18 @@ class Scheduler(
             self.disagg_metadata_buffers = MetadataBuffers(
                 buffer_size,
                 hidden_size=(
-                    model_config.hidden_size
+                    self.model_config.hidden_size
                     if self.spec_algorithm.is_eagle()
                     or self.spec_algorithm.is_standalone()
                     else 16  # minimal padding size for RDMA
                 ),
                 hidden_states_dtype=(
-                    model_config.dtype
+                    self.model_config.dtype
                     if self.spec_algorithm.is_eagle()
                     or self.spec_algorithm.is_standalone()
                     else torch.float32
                 ),
+                max_spec_topk_num=spec_metadata_topk_num,
                 custom_mem_pool=self.token_to_kv_pool_allocator.get_kvcache().maybe_get_custom_mem_pool(),
             )
 
