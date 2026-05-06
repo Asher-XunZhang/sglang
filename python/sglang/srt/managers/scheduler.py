@@ -641,6 +641,13 @@ class Scheduler(
             self.external_corpus_manager = None
             return
 
+        # For PP disaggregated prefill + spec: only the last PP rank holds the  
+        # draft model weights. Other ranks only run the target model pipeline.  
+        if self.pp_size > 1 and self.pp_rank != self.pp_size - 1:  
+            self.draft_worker = None  
+            self.external_corpus_manager = None  
+            return
+        
         # Launch a draft worker for speculative decoding
         draft_worker_kwargs = dict(
             server_args=self.server_args,
@@ -681,9 +688,16 @@ class Scheduler(
         self.init_tp_model_worker()
         self.maybe_init_draft_worker()
 
-        # Dispatch the model worker
-        if self.spec_algorithm.is_none():
-            self.model_worker = self.tp_worker
+        # # Dispatch the model worker
+        # if self.spec_algorithm.is_none():
+        #     self.model_worker = self.tp_worker
+        # else:
+        #     self.model_worker = self.draft_worker
+
+        # Dispatch the model worker  
+        if self.spec_algorithm.is_none() or self.draft_worker is None:  
+            # Non-last PP ranks in PP+spec mode: use tp_worker directly  
+            self.model_worker = self.tp_worker  
         else:
             self.model_worker = self.draft_worker
 
